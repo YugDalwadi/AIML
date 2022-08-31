@@ -1,0 +1,12 @@
+digraph Tree {
+node [shape=box] ;
+0 [label="petal_width <= 0.8\nmse = 0.667\nsamples = 150\nvalue = 1.0"] ;
+1 [label="mse = 0.0\nsamples = 50\nvalue = 0.0"] ;
+0 -> 1 [labeldistance=2.5, labelangle=45, headlabel="True"] ;
+2 [label="petal_width <= 1.75\nmse = 0.25\nsamples = 100\nvalue = 1.5"] ;
+0 -> 2 [labeldistance=2.5, labelangle=-45, headlabel="False"] ;
+3 [label="mse = 0.084\nsamples = 54\nvalue = 1.093"] ;
+2 -> 3 ;
+4 [label="mse = 0.021\nsamples = 46\nvalue = 1.978"] ;
+2 -> 4 ;
+}
