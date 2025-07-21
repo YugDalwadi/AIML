@@ -97,14 +97,14 @@ def getWordEncAndFreq(data: Corpus) -> Tuple[dict, dict]:
         for word in data[ix]:
             word = str(word)
 
-            if (word not in word_freq.keys()):
+            if word not in word_freq:
                 word_freq[word] = 1
-
-                if (word not in ("0", "1", "2", "3")):
-                    word_enc[word] = counter
-                    counter += 1
             else:
                 word_freq[word] += 1
+
+            if (word not in word_enc):
+                word_enc[word] = counter
+                counter += 1
 
     return word_enc, word_freq
 
