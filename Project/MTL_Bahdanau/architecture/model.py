@@ -1,3 +1,4 @@
+import numpy as np
 from typing import Tuple
 import torch
 import torch.nn as nn
@@ -10,6 +11,7 @@ MAX_OUTPUT_LEN = 11
 UNIQUE_FRA_WORDS = 6754
 EOS, SOS, PAD, UNK = 2, 1, 0, 3
 EMB_DIM = 128
+# Teacher Forcing Ratio. It is prob. of actual prev token (of target seq) will be inputted
 
 
 class Encoder(nn.Module):
@@ -45,7 +47,15 @@ class AlignmentModel(nn.Module):
         energies: torch.Tensor = self.hidden(
             F.tanh(alignedAnnotation + alignedDecoder))
 
-        return energies
+        exp_energies = torch.exp(energies)
+
+        # To match dimensions for division, we unsqueeze
+        energies_sum = torch.sum(  # (B,1,1) --> 1 at end added due to unsqueeze
+            exp_energies, dim=1).unsqueeze(-1)
+
+        weights = exp_energies / energies_sum  # (B, SEQ_LEN, 1)
+        # print(f"Size of weights is: {weights.size()}")
+        return weights
 
 
 class Decoder(nn.Module):
@@ -99,14 +109,15 @@ class AttentionModel(nn.Module):
         self.alignment = AlignmentModel()
         self.embedder = Embedder()
         self.initHidden = StartingHiddenState()
+        self.TFR = 0.75
 
     # input: (B,SEQ_LEN,1)--> means (Batch, (vector size) ). vector is (SEQ_LEN,1)
+
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         # print(f"Size of input is: {x.size()}")
 
         annotations: torch.Tensor = self.encoder(
             x)  # (B,SEQ_LEN,ENC_HIDDEN_DIM)
-        # print(f"Size of annotations is: {annotations.size()}")
         batch_size = x.size(0)
         sos = torch.full((batch_size, 1,), SOS,
                          dtype=torch.long).to(device)  # (B,1)
@@ -119,63 +130,58 @@ class AttentionModel(nn.Module):
         for ix in range(MAX_OUTPUT_LEN):
 
             if (prevHiddenState == None):  # For a batch's first iter.
+
                 avgAnnotation = torch.sum(
                     annotations, dim=1, keepdim=True)/annotations.size(dim=1)
-
                 prevHiddenState = self.initHidden(avgAnnotation)
-                # print(f"size of dummy prevHidden: {prevHiddenState.size()}")
 
-                energies = self.alignment(  # (B,SEQ_LEN,1)
+                weights = self.alignment(  # (B,SEQ_LEN,1)
                     prevHiddenState, annotations)
 
             else:  # For subsequent iters of same batch
 
-                # print(f"size of prevHidden: {prevHiddenState.size()}")
-                energies = self.alignment(  # (B,SEQ_LEN)
+                weights = self.alignment(  # (B,SEQ_LEN)
                     prevHiddenState, annotations)
-
-            exp_energies = torch.exp(energies)
-
-            # To match dimensions for division, we unsqueeze
-            energies_sum = torch.sum(  # (B,1,1) 1 at end added due to unsqueeze
-                exp_energies, dim=1).unsqueeze(-1)
-
-            weights = exp_energies / energies_sum  # (B, SEQ_LEN, 1)
-            # print(f"Size of weights is: {weights.size()}")
 
             # context vectors for current word pred for entire batch
             contextVector = torch.sum(  # (B, 1, ENC_HIDDEN_DIM)
                 torch.mul(annotations, weights), dim=1, keepdim=True)
-            # print(
-            # f"Size of contextVectors: {contextVector.size()}, prevWordEmbed: {prevWordEmbedding.size()}")
+            # print(f"Size of contextVectors: {contextVector.size()}")
 
-            concatDecoderInput = torch.concat(  # (B,1, ENC_HIDDEN_DIM + EMBEDDING_DIM)
-                (contextVector, prevWordEmbedding), dim=-1)
-            # print(
-            #     f"Size of concatInput: {concatDecoderInput.size()}, prevHiddenState: {prevHiddenState.size()}")
+            tfrNo = np.random.uniform()
+            if (tfrNo <= self.TFR):  # Case where teacher forcing will be applied
+                # print("yay Teacher!!")
+                trueWord = y[:, ix]
+                trueWordEmbeds = self.embedder(trueWord)
 
-            teacherTokens = y[:, ix].unsqueeze(-1)
-            print(teacherTokens.size(), prevHiddenState.size())
+                concatDecoderInput = torch.concat(  # (B,1, ENC_HIDDEN_DIM + EMBEDDING_DIM)
+                    (contextVector, trueWordEmbeds), dim=-1)
+
+            else:
+                # print("nay Teacher :((")
+                concatDecoderInput = torch.concat(
+                    (contextVector, prevWordEmbedding), dim=-1)
+
             nextTokenLogits, currHiddenState = self.decoder(  # [ (B, 1, UNIQUE_FRA_WORDS), (B, 1, DEC_HIDDEN_SIZE) ]
-                concatDecoderInput, teacherTokens)
-
-            predTokens = torch.argmax(nextTokenLogits, dim=2)  # (B,1)
-            # print(f"Size of predTokens: {predTokens.size()}")
-
-            # This keeps appending to predSentences as long as some sentence hasnt encountered an EOS. Then, that predSentence
-            # will stop being written to.
-            # for i in range(len(predSentences)):
-            #     if predSentences[i]:
-            #         if (predSentences[i][-1] != EOS and predTokens[i] != EOS):
-            #             predSentences[i].append(predTokens[i].item())
-            #     else:
-            #         predSentences[i].append(predTokens[i].item())
-
+                concatDecoderInput, prevHiddenState)
             prevHiddenState = currHiddenState
-            prevWordEmbedding = self.embedder(predTokens)
+            predTokens = torch.argmax(nextTokenLogits, dim=2)  # (B,1)
+
+            currWordEmbedding = self.embedder(predTokens)
+            prevWordEmbedding = currWordEmbedding
             logitsStored.append(nextTokenLogits)
 
         logitsStored = torch.cat(logitsStored, dim=1)
-        # print(f"Shape of logitsStored: {logitsStored.size()}")
 
         return logitsStored, predSentences
+
+    def predict(self, x):
+        # This keeps appending to predSentences as long as some sentence hasnt encountered an EOS. Then, that predSentence
+        # will stop being written to.
+        # for i in range(len(predSentences)):
+        #     if predSentences[i]:
+        #         if (predSentences[i][-1] != EOS and predTokens[i] != EOS):
+        #             predSentences[i].append(predTokens[i].item())
+        #     else:
+        #         predSentences[i].append(predTokens[i].item())
+        pass
