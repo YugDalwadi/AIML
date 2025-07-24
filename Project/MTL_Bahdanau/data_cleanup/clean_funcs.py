@@ -11,7 +11,7 @@ SOS = "1"
 PAD = "0"
 UNK = "3"
 
-MAX_LEN = 11  # max_len = 9, but 2 special tokens considered.
+MAX_LEN = 16
 MIN_FREQ = 5
 
 en_tok = spacy.load("en_core_web_sm")
@@ -55,9 +55,9 @@ def padData(data: Corpus) -> Corpus:
     for ix in range(len(data)):
         dataLen = len(data[ix])
         if (dataLen < MAX_LEN):
-            for _ in range(MAX_LEN-dataLen):
+            # -2 to account for the SOS, EOS tokens to be added.
+            for _ in range(MAX_LEN-2-dataLen):
                 data[ix].append(PAD)
-
     return data
 
 
@@ -66,7 +66,6 @@ def insertSpecialTokens(data: Corpus) -> Corpus:
     for ix in range(len(data)):
         data[ix].append(EOS)
         data[ix].insert(0, SOS)
-
     return data
 
 
@@ -76,10 +75,13 @@ def trimData(source_tok: Corpus, target_tok: Corpus) -> Tuple[Corpus, Corpus]:
     Trims sentences to MAX_LEN
     '''
     to_remove = []
+    removed = 0
     for i in range(len(source_tok)):
-        if len(source_tok[i]) > MAX_LEN or len(target_tok[i]) > MAX_LEN:
+        if ((len(source_tok[i]) > MAX_LEN) or (len(target_tok[i]) > MAX_LEN)):
+            print(source_tok[i])
             to_remove.append(i)
-
+            removed += 1
+    print(removed)
     for i in reversed(to_remove):  # Removed from end to avoid index issues
         del source_tok[i]
         del target_tok[i]
